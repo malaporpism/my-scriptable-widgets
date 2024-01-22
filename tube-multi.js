@@ -11,10 +11,10 @@
 
 // User Configurable ========================
 
-const FORCE = true  // force using online data every time
+const FORCE = false
 const DEBUG = false
-const VERBO = false // Be verbose and console.log everything
-const SAVE  = true  // save every request into Scriptable's local cache directory (will overwrite)
+const VERBO = false
+const SAVE  = true
 
 const minute = 6e4
 const REFRESH_DATA = 15 * minute // Apple set the refresh interval
@@ -27,7 +27,7 @@ const lines = ["bakerloo", "central", "circle", "district", "dlr", "elizabeth-li
 var arg = args.widgetParameter
 
 if (arg == null) {
-	arg = 'debug'
+	arg = 'elizabeth-line'
 } else {
 	if (!lines.includes(arg))    throw `ERROR : The string ${arg} is not in the array`;
 	if (typeof arg !== "string") throw "ERROR : You can only select one line";
@@ -37,21 +37,21 @@ const lineIndex = lines.indexOf(arg)
 if (DEBUG) console.log(arg + ", " + lineIndex)
 
 var shortName = {
-	  "Bakerloo": "BAK",
-	  "Central":  "CEN",
-	  "Circle":   "CIR",
-	  "District": "DIS",
+	  "Bakerloo": "Bak.",
+	  "Central":  "Cen.",
+	  "Circle":   "Cir.",
+	  "District": "Dis.",
 	  "DLR":      "DLR",
-	  "Elizabeth line": "ELZ",
+	  "Elizabeth line": "Eliz.",
 	  "Hammersmith & City": "H&C",
-	  "Jubilee":  "JUB",
-	  "London Overground": "OVG",
-	  "Metropolitan": "MET",
-	  "Northern": "NOR",
-	  "Piccadilly": "PIC",
-	  "Tram":     "TRM",
-	  "Victoria": "VIC",
-	  "Waterloo & City": "WAT"
+	  "Jubilee":  "Jub.",
+	  "London Overground": "Over",
+	  "Metropolitan": "Met.",
+	  "Northern": "Nor.",
+	  "Piccadilly": "Pic.",
+	  "Tram":     "Tram",
+	  "Victoria": "Vic.",
+	  "Waterloo & City": "Wat."
 	}
 	
 let screen = Device.screenSize();
@@ -215,16 +215,10 @@ try {
 
 if (VERBO) console.log(api);
 
-var lastUpdate = api.pop()
-var lineName = api[lineIndex]['name']
-var dark = colorBook[lineName].dark
-
-var statusCode = api[lineIndex]['lineStatuses'][0]['statusSeverity']
-let lineSymbol = getSymbol(statusCode)
-let statusText = api[lineIndex]['lineStatuses'][0]['statusSeverityDescription']
-let statusDesc = api[lineIndex]['lineStatuses'][0]['reason']
-		console.log("statusText: " + statusText)
-		console.log("statusDesc: " + statusDesc)
+let lastUpdate = api.pop()
+let lineName = api[lineIndex]['name']
+let lineStatus = api[lineIndex]['lineStatuses']
+let dark = colorBook[lineName].dark
 
 var widget = await createWidget(api)
 
@@ -237,8 +231,10 @@ async function createWidget(api) {
 
   let widget = new ListWidget()
 	  	widget.refreshAfterDate = new Date(Date.now() + REFRESH_WDGT)
+	
 	//widget.setPadding(TOP, LEAD, BOTTOM, TRAIL)
 	widget.setPadding(20,10,10,10)
+	
 	let gradient = new LinearGradient()
   		gradient.locations = [0, 1] // top to down
 			gradient.colors = [
@@ -246,6 +242,29 @@ async function createWidget(api) {
 				new Color(colorBook[lineName].main)
 			]
   widget.backgroundGradient = gradient
+
+	// [lineStatuses] almost always have only one item,
+	// but it could be an array in the rare case that there are >1 disruptions
+	// at different sections of the line 
+
+	let statusCodeArr = lineStatus.map(item => item.statusSeverity)
+	let lineSymbolArr = statusCodeArr.map(code => getSymbol(code))
+	let statusTextArr = lineStatus.map(item => item.statusSeverityDescription)
+
+	let statusText
+	if (statusTextArr.length>1) {
+		statusText = "Multi Disruptions"
+		lineName = shortName[lineName]
+	} else {
+		statusText = statusTextArr[0]
+	}
+	
+	// interestingly, TFL decides to reiterate the same description
+	// for each of the disruptions.
+
+	let statusDesc = lineStatus[0]['reason']
+	if (VERBO) console.log("statusText: " + statusText)
+	if (VERBO) console.log("statusDesc: " + statusDesc)
 
   let main = widget.addStack()
 			main.layoutVertically()
@@ -258,9 +277,11 @@ async function createWidget(api) {
 			title.lineLimit = 1
 			title.minimumScaleFactor = 0.8
 			titleStack.addSpacer(layout.SPACER_HOR)
-	let symbol = titleStack.addImage(lineSymbol.image)
+	lineSymbolArr.forEach(function(element) {
+			let symbol = titleStack.addImage(element.image)
 			symbol.imageSize = layout.ICON_SIZE
 			symbol.tintColor = new Color(layout.ICON_COLOR)
+	});
 	let status = main.addText(statusText)
 			status.textColor = (dark ? layout.TEXT_DARK : layout.TEXT_LIGHT)
 			status.font = layout.TITLE_FONT
@@ -269,11 +290,21 @@ async function createWidget(api) {
 
 	main.addSpacer(layout.SPACER_VER)
 
-	let reasonStr = clean(statusText, statusDesc)
+	let reasonStr = clean(statusText, statusDesc).str
 	let reason = main.addText(reasonStr)
 			reason.textColor = (dark ? layout.TEXT_DARK : layout.TEXT_LIGHT)
 			reason.font = layout.TEXT_FONT
 			reason.minimumScaleFactor = 0.7
+		
+	let ticketAcc = clean(statusText, statusDesc).ta
+	if (ticketAcc) {
+			titleStack.addSpacer(4)
+			let tkSymbol = SFSymbol.named('ticket')
+				 tkSymbol.applyBoldWeight()
+			let ticket = titleStack.addImage(tkSymbol.image)
+			ticket.imageSize = layout.ICON_SIZE
+			ticket.tintColor = Color.dynamic(new Color('#ffffff99'), new Color('#ffffff99'))
+	}
 
   // Display link only when run in an interactive context
   if (!config.runsWithSiri) {
@@ -400,24 +431,24 @@ function getSymbol(statusCode) {
 
 function clean(statusText, statusDesc) {
 	if (statusText == 'Good Service') {
-		return '--'
+		return {
+			str: '--',
+			ta:  false
+		}
 	} else {
 		let rgx = new RegExp(".*" + statusText + " ", "gi");
 		let str = statusDesc.replace(/.*\:\s/, "").replace(rgx, "")
-		if (VERBO) console.log("Before: " + str)
 		if (str.includes("accept")) {
-			str = str.replace(/(?:\.)\s.*accept.*/i, "")
-			titleStack.addSpacer(4)
-			let tkSymbol = SFSymbol.named('ticket')
-				 tkSymbol.applyBoldWeight()
-			let ticket = titleStack.addImage(tkSymbol.image)
-			ticket.imageSize = layout.ICON_SIZE
-			ticket.tintColor = Color.dynamic(new Color('#ffffff99'), new Color('#ffffff99'))
+			return {
+				str: str.replace(/(?:\.)\s.*accept.*/i, ""), 
+				ta:  true
+			}
 		}
 		if (str.includes("rest")) {
-			str = str.replace(/GOOD(.*)/gi, "[GR]");
+			return {
+				str: str.replace(/GOOD(.*)/gi, "[GR]"),
+				ta:  false
+			}
 		}
-		if (VERBO) console.log("After: " + str)
-		return str
 	}
 }
